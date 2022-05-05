@@ -5,9 +5,7 @@ Pinpointing and Measuring Wasabi and Samourai CoinJoins in the Bitcoin Ecosystem
 
 ## Ground-Truth Datasets
 
-* data/wasabi/CoinJoinsMain.txt: CoinJoin transactions observed by the Wasabi coordination server
-
-* data/wasabi/coordinator_addr_txs.csv: transactions having known coordinator addresses as output
+* data/wasabi/CoinJoinsMain_20211221.csv: CoinJoin transactions observed by the Wasabi coordination server
 
 * data/wasabi/manual_coin_joins.csv: manually executed CoinJoins
 
