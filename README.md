@@ -1,7 +1,7 @@
 # Wasabi and Samourai CoinJoin Measurement Study
 
-This repository contains all data and source produced as part of our measurement study entitled [
-Pinpointing and Measuring Wasabi and Samourai CoinJoins in the Bitcoin Ecosystem](https://arxiv.org/abs/2109.10229)
+This repository contains all data and source produced as part of our measurement study entitled
+*Measuring the Adoption and Actual Privacy of Decentralized CoinJoin Implementations in the Bitcoin Ecosystem*.
 
 ## Ground-Truth Datasets
 
