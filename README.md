@@ -11,5 +11,11 @@ Pinpointing and Measuring Wasabi and Samourai CoinJoins in the Bitcoin Ecosystem
 
 ## Source Code
 
-tbd
+### Requirements
 
+* Python 3 (version >= 3.7) 
+* R >= 4.2.0
+* [GraphSense](https://graphsense.info) instance for Spark jobs
+  * Apache Spark Cluster running Spark 3.1.2 / Scala 2.12
+  * Apache Cassandra (>= 3.11)
+  * DataStax Spark Cassandra connector 3.1.0
