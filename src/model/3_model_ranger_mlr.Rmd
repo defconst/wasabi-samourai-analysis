@@ -1,0 +1,199 @@
+---
+title: "Classification Model for Wasabi Coinjoins"
+output:
+  distill::distill_article:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+description: |
+  Classification of Wasabi/non-Wasabi txs
+date: "`r Sys.Date()`"
+author:
+  - name: "Rainer Stuetz <rainer.stuetz@ait.ac.at>"
+    affiliation: AIT Austrian Institute of Technology
+    affiliation_url: https://www.ait.ac.at
+    orcid_id: 0000-0001-9244-1441
+---
+
+```{r init, echo=FALSE, results='hide'}
+suppressPackageStartupMessages({
+  library("readr")
+  library("dplyr")
+  library("ggplot2")
+  library("mlr3")
+  library("mlr3filters")
+  library("mlr3learners")
+  library("mlr3pipelines")
+})
+lgr::get_logger("mlr3")$set_threshold("warn")
+theme_set(theme_bw())
+```
+
+# Dataset
+
+```{r data, fig.width=12, fig.height=12, dev="svg"}
+dat <- readr::read_csv("data/extracted_features.csv.gz") |>
+  select(-c(all_inputs_segwit, all_outputs_segwit)) |>
+  mutate(is_native_segwit = as.integer(is_native_segwit)) |>
+  mutate(rng_output_val = max_output_val - min_output_val) |>
+  {\(x) replace(x, is.na(x), 0)}()
+dim(dat)
+
+dat_mod <- dat |>
+  filter(type %in% c("wasabi", "non_wasabi")) |>
+  mutate(is_wasabi_tx = factor(type == "wasabi")) |>
+  select(-c(tx_id, tx_hash, type))
+
+corrplot::corrplot(cor(select_if(dat_mod, is.numeric)))
+
+ppsr::visualize_correlations(dat_mod) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+ppsr::visualize_pps(dat_mod) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r skimr, layout="l-screen-inset", fig.width=12, fig.height=12, dev="svg"}
+dat_mod %>% dplyr::group_by(is_wasabi_tx) %>% skimr::skim()
+```
+
+# mlr3 classif.ranger
+
+```{r mlr, fig.width=8, fig.height=6, dev="svg"}
+
+agg_conf_mat <- function(resample_res) {
+  l <- lapply(resample_res$predictions(), \(x) x$confusion)
+  Reduce("+", l) / length(l)
+}
+
+# task
+task <- mlr3::as_task_classif(
+  dat_mod, target = "is_wasabi_tx", id = "wasabi_tx_classif"
+)
+task$col_roles$stratum <- task$target_names
+task$positive <- "TRUE"
+
+# learner
+learner_rf <- mlr3::lrn(
+  "classif.ranger",
+  importance = "permutation",
+  predict_type = "prob",
+  num.threads = 4
+)
+
+# correlation filter
+filter <- mlr3filters::flt("find_correlation")
+find_cor <- mlr3pipelines::po(
+  "filter", filter, id = "flt_cor",
+  param_vals = list(filter.cutoff = 0.15)
+)
+
+# train/test single model on 80/20 split
+set.seed(2022)
+train_set <- sample(task$row_ids, 0.8 * task$nrow)
+test_set <- setdiff(task$row_ids, train_set)
+
+# remove correlated features
+scores <- filter$calculate(task)$scores
+scores
+task1 <- task$clone(deep = TRUE)
+task1$select(names(scores[scores >= 0.15]))
+learner_rf$train(task1, row_ids = train_set)
+learner_rf$model
+
+# variable importance
+p <- ggplot(as_tibble(learner_rf$importance(), rownames = "feature"),
+            aes(x = reorder(feature, value), y = value)) +
+  geom_col() +
+  coord_flip() +
+  xlab("Feature") +
+  ylab("Permutation importance")
+print(p)
+
+pred <- learner_rf$predict(task, row_ids = test_set)
+pred$confusion
+```
+
+## Resampling
+
+```{r mlr_resample_setup, fig.width=8, fig.height=6, dev="svg"}
+
+# create pipeline
+graph_learner <- as_learner(find_cor %>>% learner_rf)
+
+graph_learner$train(task, row_ids = train_set)
+graph_learner$model
+
+metrics <- msrs(c("classif.ce", "classif.auc", "classif.mcc",
+                  "classif.fpr", "classif.fnr",
+                  "classif.precision", "classif.recall", "classif.fbeta"))
+future::plan("multicore")
+```
+
+### Repeated holdout / subsampling
+
+```{r mlr_subsample, fig.width=8, fig.height=6, dev="svg"}
+
+std_mean <- function(x) sd(x)/sqrt(length(x))
+
+resampling <- rsmp("subsampling", repeats = 5)
+rr <- resample(task, learner = graph_learner, resampling = resampling)
+rr$aggregate(metrics)
+agg_conf_mat(rr)
+# standard errors
+rr$score(metrics) %>%
+  select(starts_with("classif.")) %>%
+  purrr::map_df(std_mean)
+
+resampling <- rsmp("subsampling", repeats = 10)
+rr <- resample(task, learner = graph_learner, resampling = resampling)
+rr$aggregate(metrics)
+agg_conf_mat(rr)
+# standard errors
+rr$score(metrics) %>%
+  select(starts_with("classif.")) %>%
+  purrr::map_df(std_mean)
+```
+
+### Cross-validation
+
+```{r mlr_cv, fig.width=8, fig.height=6, dev="svg"}
+cv5 <- rsmp("cv", folds = 5)
+cv5$instantiate(task)
+rr <- resample(task, learner = graph_learner, resampling = cv5)
+rr$aggregate(metrics)
+agg_conf_mat(rr)
+# standard errors
+rr$score(metrics) %>%
+  select(starts_with("classif.")) %>%
+  purrr::map_df(std_mean)
+
+cv10 <- rsmp("cv", folds = 10)
+cv10$instantiate(task)
+rr <- resample(task, learner = graph_learner, resampling = cv10)
+rr$aggregate(metrics)
+agg_conf_mat(rr)
+# standard errors
+rr$score(metrics) %>%
+  select(starts_with("classif.")) %>%
+  purrr::map_df(std_mean)
+```
+
+# Validation
+
+```{r validation, fig.width=8, fig.height=6, dev="svg"}
+learner_rf$predict_newdata(
+  filter(dat, type == "non_wasabi_validation")
+)$response %>%
+  table()
+learner_rf$predict_newdata(
+  filter(dat, type == "wasabi_manual")
+)$response %>%
+  table()
+```
+
+# Ficsor Heuristic
+
+```{r ficsor_heuristic, fig.width=8, fig.height=6, dev="svg"}
+dat_ficsor <- readr::read_csv("data/tx_sample_ficsor.csv.gz")
+table(dat_ficsor$type, dat_ficsor$is_wasabi_coinjoin_heuristic)
+```
