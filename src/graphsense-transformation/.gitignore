@@ -1,0 +1,12 @@
+eclipse.sbt
+
+# sbt
+target/
+
+# IDE
+/bin/
+/.settings/
+/.cache-main
+/.cache-tests
+/.classpath
+/.project
